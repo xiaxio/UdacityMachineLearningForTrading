@@ -93,10 +93,10 @@ def test_run():
     dates = pd.date_range(start_date, end_date)
 
     # Choose stock symbols to read
-    symbols = ['SPY', 'GOOG', 'IBM', 'GLD']
+    symbols = ['SPY', 'GOOG', 'IBM', 'GLD', 'XOM']
 
     # Download data and save data
-    # save_data(symbols, dates)
+    save_data(symbols, dates)
 
     # Get stock data
     df = get_data(symbols, dates)
