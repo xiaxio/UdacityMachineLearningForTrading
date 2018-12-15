@@ -35,6 +35,7 @@ def plot_selected(df, columns, start_index, end_index):
     """Plot the desired columns over index values in the given range."""
     df_temp = df.ix[start_index:end_index, columns]
     plot_data(df_temp, "Selected Data")
+    return
 
 
 def symbol_to_path(symbol, base_dir="C:\\Users\\aroom\\Documents\\Data\\tickers_data\\"):
@@ -79,7 +80,7 @@ def save_data(symbols, dates):
         df_temp = df_temp.dropna()
         df_temp.to_csv(symbol_to_path(symbol))
 
-    return df
+    return df_temp
 
 
 def test_run():
@@ -88,7 +89,7 @@ def test_run():
 
     # Define a date range
     start_date = '2010-01-01'
-    end_date = '2010-12-31'
+    end_date = '2014-12-31'
     dates = pd.date_range(start_date, end_date)
 
     # Choose stock symbols to read
