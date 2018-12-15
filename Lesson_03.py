@@ -88,7 +88,7 @@ def test_run():
     df = pd.DataFrame()
 
     # Define a date range
-    start_date = '2010-01-01'
+    start_date = '2009-01-01'
     end_date = '2014-12-31'
     dates = pd.date_range(start_date, end_date)
 
