@@ -2,6 +2,8 @@
 # This calculates the main statistics of a portfolio, based on the tickers and distribution mentioned during
 # course's lesson 7 and 8
 
+# TODO: I have a problem with plot that overlaps what should be different graphics
+
 import pandas as pd
 import math
 import matplotlib.pyplot as plt
@@ -46,7 +48,7 @@ def test_run():
     # Cumulative returns
     port_cum_rets = (port_val['Return'] / port_val.iloc[0, 0]) - 1
     plot_data(port_cum_rets, title="Portfolio Cumulative Returns", ylabel="Portfolio Cumulative Returns")
-    port_return = (port_val.iloc[-1,0] / port_val.iloc[0,0]) - 1
+    port_return = (port_val.iloc[-1, 0] / port_val.iloc[0, 0]) - 1
     print('Portfolio Return: ', port_return)
     # Average Daily Return
     avg_daily_return = daily_rets.mean().values[0]
@@ -59,6 +61,15 @@ def test_run():
     port_sr = math.sqrt(252) * avg_daily_return / port_risk
     print('Portfolio Sharpe Ratio:', port_sr)
 
+
+"""
+# Summary Results Data Table
+data = [{'0': '', '1': 'MACD(12,26,9)', '2': 'MACD(12,26,9)TC', '3': 'B&H'},
+        {'0': 'Annualized Return', '1': macdyrt, '2': macdyrtc, '3': bhyrt},
+        {'0': 'Annualized Standard Deviation', '1': macdstd, '2': macdstdc, '3': bhstd},
+        {'0': 'Annualized Sharpe Ratio (Rf=0%)', '1': macdsr, '2': macdsrc, '3': bhsr}]
+table = pd.DataFrame(data)
+"""
 
 if __name__ == "__main__":
     test_run()
