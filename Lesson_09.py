@@ -4,6 +4,8 @@
 #######################################################################################################
 # WARNING: Run the code by segments, the plots overlap and as of 12/22/2018 I still don't know how
 # to handle the plots so it is a different plot per segment
+# UPDATE 08/10/2019: Added lines plt.figure(number) to separate the graphs in different segments
+# Now it is ok to run all the code at once!!
 #######################################################################################################
 
 import pandas as pd
@@ -111,6 +113,7 @@ def test_run():
     # Plot function values, mark minima
     Xplot = np.linspace(0.5, 2.5, 21)
     Yplot = f(Xplot)
+    plt.figure(1)
     plt.plot(Xplot, Yplot)
     plt.plot(min_result.x, min_result.fun, 'ro')
     plt.title('Minima of an objective function')
@@ -125,6 +128,7 @@ def test_run():
     print('Original line: C0 = {}, C1 = {}'.format(l_orig[0], l_orig[1]))
     Xorig = np.linspace(0, 10, 21)
     Yorig = l_orig[0] * Xorig + l_orig[1]
+    plt.figure(2)
     plt.plot(Xorig, Yorig, 'b', linewidth=2.0, label='Original line')
 
     # Generate noisy data points
@@ -152,6 +156,7 @@ def test_run():
     print(C_orig)
     Xorig = np.linspace(-6, 6, 21)
     Yorig = C_orig(Xorig)
+    plt.figure(3)
     plt.plot(Xorig, Yorig, 'b--', linewidth=2.0, label='Original line')
     plt.ylim(-500, 2000)
 

@@ -13,6 +13,47 @@ from Lesson_05 import get_data, plot_data, compute_daily_returns
 from Lesson_03 import normalize_data
 
 
+def main_stats(_asset, _k=252):
+    """
+    Input:
+    _asset: Dataframe with stock/portfolio data in 'Return' column
+    For daily samples, _k=252. For weekly samples, _k=52, for monthly samples, _k=12
+    _k is NOT the number of periods sampled, it is a constant that depends only on the sampling period
+
+    :return: Main stock/portfolio statistics:
+    1. Cumulative return
+    2. Average daily returns
+    3. Risk (Returns standard deviation)
+    4. Sharpe Ratio
+
+    """
+
+    import math
+
+    # Calculation of cumulative returns
+    _norm_asset = normalize_data(_asset[1:])
+    _asset_value = pd.DataFrame()
+    _asset_value['Return'] = _norm_asset.sum(axis=1)
+    # _cumulative_returns = (_asset_value['Return'] / _asset_value.iloc[0, 0]) - 1
+    _asset_return = (_asset.iloc[-1, 0] / _asset.iloc[0, 0]) - 1
+
+    # Portfolio Daily returns
+    _daily_returns = compute_daily_returns(_asset)
+    # To avoid division by zero, we eliminate the first return
+    _daily_returns = _daily_returns[1:]
+    # Average Daily Return
+    _avg_daily_return = _daily_returns.mean().values[0]
+
+    # Standard deviation of daily returns (risk)
+    _asset_risk = _daily_returns.std().values[0]
+
+    # Sharpe Ratio
+    # For daily samples, sqrt(252). For weekly samples, sqrt(52), for monthly samples, sqrt(12)
+    _asset_sr = math.sqrt(_k) * _avg_daily_return / _asset_risk
+
+    return _asset_return, _avg_daily_return, _asset_risk, _asset_sr
+
+
 def test_run():
     # Compute portfolio statistics
     # Read data
@@ -21,6 +62,7 @@ def test_run():
     allocs = [.4, .4, .1, .1]
     start_val = 10000.0
     components = get_data(symbols, dates)
+    plt.figure(1)
     plot_data(components, title='Portfolio Components Prices')
 
     # Normalize prices
@@ -38,6 +80,7 @@ def test_run():
     port_val = pd.DataFrame()
     port_val['Return'] = pos_vals.sum(axis=1)
     plot_data(port_val['Return'], title="Portfolio Value", ylabel="Portfolio Value")
+    plt.close()
 
     # Portfolio Daily returns
     daily_rets = compute_daily_returns(port_val)
@@ -61,15 +104,8 @@ def test_run():
     port_sr = math.sqrt(252) * avg_daily_return / port_risk
     print('Portfolio Sharpe Ratio:', port_sr)
 
+    ar, dr, risk, sr = main_stats(port_val)
 
-"""
-# Summary Results Data Table
-data = [{'0': '', '1': 'MACD(12,26,9)', '2': 'MACD(12,26,9)TC', '3': 'B&H'},
-        {'0': 'Annualized Return', '1': macdyrt, '2': macdyrtc, '3': bhyrt},
-        {'0': 'Annualized Standard Deviation', '1': macdstd, '2': macdstdc, '3': bhstd},
-        {'0': 'Annualized Sharpe Ratio (Rf=0%)', '1': macdsr, '2': macdsrc, '3': bhsr}]
-table = pd.DataFrame(data)
-"""
 
 if __name__ == "__main__":
     test_run()
