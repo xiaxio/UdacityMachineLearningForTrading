@@ -24,7 +24,8 @@ def main_stats(_asset, _k=252):
     1. Cumulative return
     2. Average daily returns
     3. Risk (Returns standard deviation)
-    4. Sharpe Ratio
+    4. Kurtosis
+    5. Sharpe Ratio
 
     """
 
@@ -42,16 +43,19 @@ def main_stats(_asset, _k=252):
     # To avoid division by zero, we eliminate the first return
     _daily_returns = _daily_returns[1:]
     # Average Daily Return
-    _avg_daily_return = _daily_returns.mean().values[0]
+    _avg_daily_return = _daily_returns.mean().values[5]
 
     # Standard deviation of daily returns (risk)
-    _asset_risk = _daily_returns.std().values[0]
+    _asset_risk = _daily_returns.std().values[5]
+
+    # Kurtosis
+    _asset_kurtosis = _daily_returns.kurtosis().values[5]
 
     # Sharpe Ratio
     # For daily samples, sqrt(252). For weekly samples, sqrt(52), for monthly samples, sqrt(12)
     _asset_sr = math.sqrt(_k) * _avg_daily_return / _asset_risk
 
-    return _asset_return, _avg_daily_return, _asset_risk, _asset_sr
+    return _asset_return, _avg_daily_return, _asset_risk, _asset_kurtosis, _asset_sr
 
 
 def test_run():
