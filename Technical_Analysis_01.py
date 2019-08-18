@@ -120,6 +120,8 @@ def calculate_main_stats(_tickers_list, _dates, _tickers_directory, _analysis_di
 def insert_ta(_tickers_list, _dates, _tickers_directory, _analysis_directory):
     """ Computes main technical analysis values, and saves new tickers files with Technical Analysis (TA) """
 
+    from functools import partial
+
     _file_name = 'summary_file'
     _summary_data = pd.read_csv(symbol_to_path(_file_name, _analysis_directory), index_col='Symbol')
 
@@ -129,13 +131,34 @@ def insert_ta(_tickers_list, _dates, _tickers_directory, _analysis_directory):
                                    parse_dates=True, na_values=['nan'])
         _ticker_data['DailyRet'] = _ticker_data['Adj Close'].pct_change()
         _ticker_data.loc[_ticker_data.index[0], 'DailyRet'] = 0
+
+        # Insert Simple Moving Average columns
         for _window_size in (5, 20, 50, 200):
             _ticker_data['SMA_' + str(_window_size)] = _ticker_data['Adj Close'].rolling(_window_size).mean()
             # Previous Periods Data (avoid back-testing bias)
             _ticker_data['SMA_' + str(_window_size) + '(-1)'] = _ticker_data['SMA_' + str(_window_size)].shift(periods=1)
             _ticker_data['SMA_' + str(_window_size) + '(-2)'] = _ticker_data['SMA_' + str(_window_size)].shift(periods=2)
-            # Save ticker data with Technical Analysis
-            _ticker_data.to_csv(symbol_to_path(_ticker + '_TA', _tickers_directory))
+
+        # Insert Weighted Moving Average columns
+        # Formula for EWMA:
+        # https://stackoverflow.com/questions/38836482/create-a-rolling-custom-ewma-on-a-pandas-dataframe
+
+        # _alpha = 1 - np.log(2) / 3  # This is ewma's decay factor.
+
+        for _window_size in (5, 20, 50, 200):
+            # In the end, I used _alpha as suggested for EMA.
+            # The recommended _alpha = 1 - np.log(2) / 3 is too close to price action
+            # https://www.investopedia.com/ask/answers/122314/what-exponential-moving-average-ema-formula-and-how-ema-calculated.asp
+            _alpha = 2 / (_window_size + 1)
+            _weights = list(reversed([(1 - _alpha) ** n for n in range(_window_size)]))
+            ewma = partial(np.average, weights=_weights)
+            _ticker_data['EWMA_' + str(_window_size)] = _ticker_data['Adj Close'].rolling(_window_size).apply(ewma, raw=True)
+            # Previous Periods Data (avoid back-testing bias)
+            _ticker_data['EWMA_' + str(_window_size) + '(-1)'] = _ticker_data['EWMA_' + str(_window_size)].shift(periods=1)
+            _ticker_data['EWMA_' + str(_window_size) + '(-2)'] = _ticker_data['EWMA_' + str(_window_size)].shift(periods=2)
+
+        # Save ticker data with Technical Analysis
+        _ticker_data.to_csv(symbol_to_path(_ticker + '_TA', _tickers_directory))
 
     return
 
@@ -225,29 +248,33 @@ def simulate_strategy_on_ticker(_ticker, _ticker_data, _column_1, _column_2, _an
 def run_strategies(_tickers_list, _tickers_directory, _analysis_directory):
     """ Runs strategies over _tickers_list, and computes returns and main statistics for the backtest simulation """
 
+    _MAs = ['SMA_', 'EWMA_']
     _fast_moving_avg = [5, 5, 5, 20, 20, 50]
     _slow_moving_avg = [20, 50, 200, 50, 200, 200]
     _strategy = pd.DataFrame(columns=['Number', 'Entry', 'Exit', 'Filter'])
+    _st_counter = 0
 
-    for _counter in range(len(_fast_moving_avg)):
-        # Strategy n: _fast_moving_avg and _slow_moving_avg crossover
-        _strategy_number = _counter + 1
-        _strategy.loc[_counter, 'Number'] = _strategy_number
-        _strategy.loc[_counter, 'Entry'] = 'SMA_' + str(_fast_moving_avg[_counter]) + ' > SMA_' + str(_slow_moving_avg[_counter])
-        _strategy.loc[_counter, 'Exit'] = 'SMA_' + str(_fast_moving_avg[_counter]) + ' < SMA_' + str(_slow_moving_avg[_counter])
-        _strategy.loc[_counter, 'Filter'] = 'None'
-        print('Strategy info:')
-        print(_strategy.loc[_counter, :])
+    for _ma in _MAs:
 
-        column_1 = 'SMA_' + str(_fast_moving_avg[_counter])
-        column_2 = 'SMA_' + str(_slow_moving_avg[_counter])
-        for _ticker in _tickers_list:
-            print('Simulating strategy with ticker ' + _ticker)
-            _ticker_data = pd.read_csv(symbol_to_path(_ticker + '_TA', _tickers_directory), index_col='Date',
-                                       parse_dates=True, na_values=['nan'])
-            _ticker_data = simulate_strategy_on_ticker(_ticker, _ticker_data, column_1, column_2,
-                                                       _analysis_directory, _strategy_number)
-            _ticker_data.to_csv(symbol_to_path(_ticker + '_TA', _tickers_directory))
+        for _counter in range(len(_fast_moving_avg)):
+            # Strategy n: _fast_moving_avg and _slow_moving_avg crossover
+            _strategy.loc[_st_counter, 'Number'] = _st_counter + 1
+            _strategy.loc[_st_counter, 'Entry'] = _ma + str(_fast_moving_avg[_counter]) + ' > ' + _ma + str(_slow_moving_avg[_counter])
+            _strategy.loc[_st_counter, 'Exit'] = _ma + str(_fast_moving_avg[_counter]) + ' < ' + _ma + str(_slow_moving_avg[_counter])
+            _strategy.loc[_st_counter, 'Filter'] = 'None'
+            print('Strategy info:')
+            print(_strategy.loc[_st_counter, :])
+
+            column_1 = _ma + str(_fast_moving_avg[_counter])
+            column_2 = _ma + str(_slow_moving_avg[_counter])
+            for _ticker in _tickers_list:
+                print('Simulating strategy with ticker ' + _ticker)
+                _ticker_data = pd.read_csv(symbol_to_path(_ticker + '_TA', _tickers_directory), index_col='Date',
+                                           parse_dates=True, na_values=['nan'])
+                _ticker_data = simulate_strategy_on_ticker(_ticker, _ticker_data, column_1, column_2,
+                                                           _analysis_directory, _st_counter)
+                _ticker_data.to_csv(symbol_to_path(_ticker + '_TA', _tickers_directory))
+            _st_counter += 1
 
     _strategy.to_csv(symbol_to_path('strategies_info', _analysis_directory), index=False)
 
@@ -342,6 +369,7 @@ def main():
     _tickers_directory = config.tickers_directory
     _analysis_directory = config.analysis_directory
     _ticker = _tickers_list[1]
+    _window_size = 5
     _counter = 0
     _column_1 = column_1
     _column_2 = column_2
