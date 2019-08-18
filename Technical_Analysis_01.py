@@ -13,8 +13,9 @@
 ######################################################
 
 import datetime
+import numpy as np
 import pandas as pd
-from Lesson_03 import download_yahoo_historical_data, symbol_to_path
+from Lesson_03 import download_yahoo_historical_data, symbol_to_path, symbol_to_path_xlsx
 
 
 def clean_tickers_list(_tickers_data):
@@ -87,18 +88,20 @@ def download_tickers_historical_data(_tickers_list, _dates, _tickers_directory):
 
 
 def calculate_main_stats(_tickers_list, _dates, _tickers_directory, _analysis_directory):
-    """ Computes main statistics for each stock in _tickers_list, and updates summary_file"""
+    """ Computes main statistics for each stock in _tickers_list, and updates summary_file
+    Stock value is expected to be in 'Adj Close' column (yahoo style) """
 
-    from Lesson_08 import main_stats
+    from Lesson_08 import main_stats_single_asset
 
-    _file_name = 'summary_file_' + pd.datetime.today().strftime('%Y%m%d')
+    _file_name = 'summary_file_'
     _summary_data = pd.read_csv(symbol_to_path(_file_name, _analysis_directory), index_col='Symbol')
     for _ticker in _tickers_list:
         print('Calculating main stats for ', _ticker)
         _base_df = pd.DataFrame(index=_dates)
         _ticker_data = pd.read_csv(symbol_to_path(_ticker, _tickers_directory), index_col='Date')
         _ticker_data = _base_df.join(_ticker_data).dropna()
-        _ticker_ar, _ticker_dr, _ticker_risk, _ticker_kurtosis, _ticker_sr = main_stats(_ticker_data)
+        _ticker_ar, _ticker_dr, _ticker_risk, _ticker_kurtosis, _ticker_sr = \
+            main_stats_single_asset(_ticker_data['Adj Close'])
         _summary_data.loc[_ticker, 'Ret52w'] = _ticker_ar
         _summary_data.loc[_ticker, 'AvgDailyRet52w'] = _ticker_dr
         _summary_data.loc[_ticker, 'Risk52w'] = _ticker_risk
@@ -107,7 +110,7 @@ def calculate_main_stats(_tickers_list, _dates, _tickers_directory, _analysis_di
         _summary_data.loc[_ticker, 'MinAdjCl52w'] = _ticker_data.describe().loc['min', 'Adj Close']
         _summary_data.loc[_ticker, 'MaxAdjCl52w'] = _ticker_data.describe().loc['max', 'Adj Close']
 
-    _file_name = 'summary_file_' + pd.datetime.today().strftime('%Y%m%d')
+    _file_name = 'summary_file_'
     _summary_data.to_csv(symbol_to_path(_file_name, _analysis_directory))
     print('Summary file created')
 
@@ -115,21 +118,180 @@ def calculate_main_stats(_tickers_list, _dates, _tickers_directory, _analysis_di
 
 
 def insert_ta(_tickers_list, _dates, _tickers_directory, _analysis_directory):
-    """ Computes main technical analysis values, and updates summary_file"""
+    """ Computes main technical analysis values, and saves new tickers files with Technical Analysis (TA) """
 
-    from Lesson_05 import compute_daily_returns
-
-    _file_name = 'summary_file_' + pd.datetime.today().strftime('%Y%m%d')
+    _file_name = 'summary_file_'
     _summary_data = pd.read_csv(symbol_to_path(_file_name, _analysis_directory), index_col='Symbol')
 
     for _ticker in _tickers_list:
         print('Calculating technical analysis values for ', _ticker)
-        _df_tmp = pd.read_csv(symbol_to_path(_ticker, _tickers_directory), index_col='Date',
-                              parse_dates=True, na_values=['nan'])
-        _df_tmp['DailyRet'] = _df_tmp['Adj Close'].pct_change()
-        _df_tmp.loc[_df_tmp.index[0], 'DailyRet'] = 0
+        _ticker_data = pd.read_csv(symbol_to_path(_ticker, _tickers_directory), index_col='Date',
+                                   parse_dates=True, na_values=['nan'])
+        _ticker_data['DailyRet'] = _ticker_data['Adj Close'].pct_change()
+        _ticker_data.loc[_ticker_data.index[0], 'DailyRet'] = 0
         for _window_size in (5, 20, 50, 200):
-            _df_tmp['SMA_' + str(_window_size)] = _df_tmp['Adj Close'].rolling(_window_size).mean()
+            _ticker_data['SMA_' + str(_window_size)] = _ticker_data['Adj Close'].rolling(_window_size).mean()
+            # Previous Periods Data (avoid back-testing bias)
+            _ticker_data['SMA_' + str(_window_size) + '(-1)'] = _ticker_data['SMA_' + str(_window_size)].shift(periods=1)
+            _ticker_data['SMA_' + str(_window_size) + '(-2)'] = _ticker_data['SMA_' + str(_window_size)].shift(periods=2)
+            # Save ticker data with Technical Analysis
+            _ticker_data.to_csv(symbol_to_path(_ticker + '_TA', _tickers_directory))
+
+    return
+
+
+def simulate_strategy_on_ticker(_ticker, _ticker_data, _column_1, _column_2, _analysis_directory, _strategy_number):
+    """ Receives two columns names and compares their values, adding a column with Trading Signals, and another
+     with Trading Strategy """
+
+    # Generate Trading Signals (buy=1 , sell=-1, do nothing=0)
+    _signal_column = 'Strategy_' + str(_strategy_number) + '_signal'
+    _ticker_data[_signal_column] = 0
+    _signal_column_number = _ticker_data.columns.get_loc(_signal_column)
+    _signal = 0
+
+    for i, r in enumerate(_ticker_data.iterrows()):
+        if r[1][_column_1 + '(-2)'] < r[1][_column_2 + '(-2)'] and r[1][_column_1 + '(-1)'] > r[1][_column_2 + '(-1)']:
+            _signal = 1
+        elif r[1][_column_1 + '(-2)'] > r[1][_column_2 + '(-2)'] and r[1][_column_1 + '(-1)'] < r[1][_column_2 + '(-1)']:
+            _signal = -1
+        else:
+            _signal = 0
+        _ticker_data.iloc[i, _signal_column_number] = _signal
+
+    # Generate Trading Strategy (own stock=1 , not own stock=0, short-selling not available yet)
+    _strategy_column = 'Strategy_' + str(_strategy_number) + '_flag'
+    _ticker_data[_strategy_column] = 0
+    _strategy_column_number = _ticker_data.columns.get_loc(_strategy_column)
+    _strategy_flag = 0
+
+    for i, r in enumerate(_ticker_data.iterrows()):
+        if r[1][_signal_column] == 1:
+            _strategy_flag = 1
+        elif r[1][_signal_column] == -1:
+            _strategy_flag = 0
+        else:
+            _strategy_flag = _ticker_data[_strategy_column][i - 1]
+        _ticker_data.iloc[i, _strategy_column_number] = _strategy_flag
+
+    # Strategy daily returns without Trading Commissions
+    _strategy_daily_returns_column = 'Strategy_' + str(_strategy_number) + '_stratDayRet'
+    _ticker_data[_strategy_daily_returns_column] = _ticker_data['DailyRet'] * _ticker_data[_strategy_column]
+
+    # Strategy cumulative returns without Trading Commissions
+    _strategy_cum_returns_column = 'Strategy_' + str(_strategy_number) + '_stratCumRet'
+    _ticker_data[_strategy_cum_returns_column] = np.cumprod(_ticker_data[_strategy_daily_returns_column] + 1) - 1
+
+    # Calculate strategy's main statistics
+    _one_year_ago = (pd.datetime.today() - pd.Timedelta(days=365)).strftime('%Y-%m-%d')
+    _end_date = pd.datetime.today().strftime('%Y-%m-%d')
+    _one_year = pd.date_range(_one_year_ago, _end_date)
+    _base_df = pd.DataFrame(index=_one_year)
+    _tmp_ticker_data = _base_df.join(_ticker_data[_strategy_daily_returns_column]).dropna()
+
+    # Strategy cumulative returns without Trading Commissions 52 weeks
+    _strategy_cum_returns_52w_column = 'Strategy_' + str(_strategy_number) + '_stratCumRet_52w'
+    _ticker_data[_strategy_cum_returns_52w_column] = np.cumprod(_tmp_ticker_data[_strategy_daily_returns_column] + 1) - 1
+    _strategy_cum_return_52w = _ticker_data[_strategy_cum_returns_52w_column][-1]
+
+    # Strategy average daily returns
+    _strategy_daily_avg_return = _tmp_ticker_data[_strategy_daily_returns_column].mean()
+
+    # Strategy risk (standard deviation) without Trading Commissions 52 weeks
+    _strategy_risk = _tmp_ticker_data[_strategy_daily_returns_column].std()
+
+    # Strategy Sharpe Ratio
+    _strategy_sharpe_ratio = np.sqrt(252) * _strategy_daily_avg_return / _strategy_risk
+
+    # Save strategy's main statistics in summary file
+    _file_name = 'summary_file'
+    _summary_data = pd.read_csv(symbol_to_path(_file_name, _analysis_directory), index_col='Symbol')
+    _summary_data.loc[_ticker, _strategy_column + '_AvgRet'] = _strategy_daily_avg_return
+    _summary_data.loc[_ticker, _strategy_column + '_CumRet'] = _strategy_cum_return_52w
+    _summary_data.loc[_ticker, _strategy_column + '_risk'] = _strategy_risk
+    _summary_data.loc[_ticker, _strategy_column + '_SharpeRatio'] = _strategy_sharpe_ratio
+    _summary_data.to_csv(symbol_to_path(_file_name, _analysis_directory))
+
+    return _ticker_data
+
+
+def run_strategies(_tickers_list, _tickers_directory, _analysis_directory):
+    """ Runs strategies over _tickers_list, and computes returns and main statistics for the backtest simulation """
+
+    _fast_moving_avg = [5, 5, 5, 20, 20, 50]
+    _slow_moving_avg = [20, 50, 200, 50, 200, 200]
+
+    for _counter in range(len(_fast_moving_avg)):
+        # Strategy n: _fast_moving_avg and _slow_moving_avg crossover
+        _strategy_number = _counter + 1
+        _strategy = pd.DataFrame(columns=['Entry', 'Exit', 'Filter'])
+        _strategy.loc[_strategy_number, 'Entry'] = 'SMA_' + str(_fast_moving_avg[_counter]) + ' > SMA_' + str(_slow_moving_avg[_counter])
+        _strategy.loc[_strategy_number, 'Exit'] = 'SMA_' + str(_fast_moving_avg[_counter]) + ' < SMA_' + str(_slow_moving_avg[_counter])
+        _strategy.loc[_strategy_number, 'Filter'] = 'None'
+        print('Strategy info:')
+        print(_strategy.loc[_strategy_number, :])
+
+        column_1 = 'SMA_' + str(_fast_moving_avg[_counter])
+        column_2 = 'SMA_' + str(_slow_moving_avg[_counter])
+        for _ticker in _tickers_list:
+            print('Simulating strategy with ticker ' + _ticker)
+            _ticker_data = pd.read_csv(symbol_to_path(_ticker + '_TA', _tickers_directory), index_col='Date',
+                                       parse_dates=True, na_values=['nan'])
+            _ticker_data = simulate_strategy_on_ticker(_ticker, _ticker_data, column_1, column_2,
+                                                       _analysis_directory, _strategy_number)
+            _ticker_data.to_csv(symbol_to_path(_ticker + '_TA', _tickers_directory))
+
+        _strategy.to_csv(symbol_to_path('strategy', _analysis_directory))
+
+    return
+
+
+def summarize_the_summary(_analysis_directory):
+    """ Reads the summary file, generates statistics about them, and saves them in another file """
+
+    # Read summary file
+    # _file_name = 'summary_file_' + pd.datetime.today().strftime('%Y%m%d')
+    _file_name = 'summary_file'
+    _summary_data = pd.read_csv(symbol_to_path(_file_name, _analysis_directory), index_col='Symbol')
+
+    # Extracts column names to create new DataFrame with only the columns with the string '_flag_'
+    _columns_names = pd.DataFrame(_summary_data.columns, columns=['Column_Name'])
+    _filtered_columns_names = _columns_names[(_columns_names['Column_Name'].str.contains('_flag_'))]
+    _sim_output = _summary_data.loc[:, _filtered_columns_names['Column_Name'].values]
+
+    # Creates summary DataFrame with main statistics
+    _sim_output_describe = _sim_output.describe()
+    # _sim_output_describe.loc['mean']
+    # _sim_output_describe.transpose()
+
+    # Extracts index names to create new DataFrame with only the rows with the string '_AvgRet'
+    _index_names = pd.DataFrame(_sim_output_describe.transpose().index, columns=['Index_Name'])
+    _filtered_index_names = _index_names[(_index_names['Index_Name'].str.contains('_AvgRet'))]
+    _AvgRet = _sim_output_describe.transpose().loc[_filtered_index_names['Index_Name'].values, :]
+    # _AvgRet.to_csv(symbol_to_path('Strategies_AvgRet', _analysis_directory))
+
+    # Extracts index names to create new DataFrame with only the rows with the string '_SharpeRatio'
+    _filtered_index_names = _index_names[(_index_names['Index_Name'].str.contains('_SharpeRatio'))]
+    _SharpeRatio = _sim_output_describe.transpose().loc[_filtered_index_names['Index_Name'].values, :]
+    # _SharpeRatio.to_csv(symbol_to_path('Strategies_SharpeRatio', _analysis_directory))
+
+    # Extracts index names to create new DataFrame with only the rows with the string '_risk'
+    _filtered_index_names = _index_names[(_index_names['Index_Name'].str.contains('_risk'))]
+    _risk = _sim_output_describe.transpose().loc[_filtered_index_names['Index_Name'].values, :]
+    # _risk.to_csv(symbol_to_path('Strategies_Risk', _analysis_directory))
+
+    # Extracts index names to create new DataFrame with only the rows with the string '_CumRet'
+    _filtered_index_names = _index_names[(_index_names['Index_Name'].str.contains('_CumRet'))]
+    _CumRet = _sim_output_describe.transpose().loc[_filtered_index_names['Index_Name'].values, :]
+    # _CumRet.to_csv(symbol_to_path('Strategies_CumRet', _analysis_directory))
+
+    # Create excel file for the summary describe file
+    with pd.ExcelWriter(symbol_to_path_xlsx('summary_describe_' + pd.datetime.today().strftime('%Y%m%d'),
+                                            _analysis_directory)) as writer:
+        _AvgRet.to_excel(writer, sheet_name='AvgRet')
+        _CumRet.to_excel(writer, sheet_name='CumRet')
+        _risk.to_excel(writer, sheet_name='Risk')
+        _SharpeRatio.to_excel(writer, sheet_name='SharpeRatio')
 
     return
 
@@ -158,11 +320,28 @@ def main():
     one_year_ago = (pd.datetime.today() - pd.Timedelta(days=365)).strftime('%Y-%m-%d')
     one_year = pd.date_range(one_year_ago, end_date)
     calculate_main_stats(filtered_tickers_list, one_year, config.tickers_directory, config.analysis_directory)
-    insert_ta(filtered_tickers_list, config.tickers_directory, config.analysis_directory)
+    insert_ta(filtered_tickers_list, one_year, config.tickers_directory, config.analysis_directory)
+    run_strategies(filtered_tickers_list, config.tickers_directory, config.analysis_directory)
+    summarize_the_summary(config.analysis_directory)
 
+
+"""
+    _tickers_list = filtered_tickers_list
+    _date = one_year
+    # _date = dates
+    _tickers_directory = config.tickers_directory
+    _analysis_directory = config.analysis_directory
+    _ticker = _tickers_list[1]
+    _column_1 = column_1
+    _column_2 = column_2
+    _df = pd.DataFrame(_summary_data.columns, columns=['Column_Name'])
+    _df = _df[(_df['Column_Name'].str.contains('_flag_'))]
+    _df_2 = _summary_data.loc[:,_df['Column_Name'].values]
+    _df_3 = _df_2.describe()
+    _clean_tickers_data = _tickers_data[(_tickers_data['Symbol'].str.contains('\.') == False)]
+"""
 
 if __name__ == "__main__":
     main()
-
 
 

@@ -43,6 +43,11 @@ def symbol_to_path(symbol, base_dir="C:\\Users\\aroom\\Documents\\Data\\tickers_
     return os.path.join(base_dir, "{}.csv".format(str(symbol)))
 
 
+def symbol_to_path_xlsx(symbol, base_dir="C:\\Users\\aroom\\Documents\\Data\\tickers_data\\"):
+    """Return CSV file path given ticker symbol."""
+    return os.path.join(base_dir, "{}.xlsx".format(str(symbol)))
+
+
 def get_data(symbols, dates):
     """Read stock data (adjusted close) for given symbols from CSV files."""
     df = pd.DataFrame(index=dates)
