@@ -12,6 +12,13 @@
 #                                                    #
 ######################################################
 
+# TODO: Once a strategy is ran, save a file with it so it does not need to be run again
+# DONE: Include Buy and hold as strategy 0, and calculate its main stats
+# DONE: Fix bug with ADX in ta library. It is not showing anything
+# TODO: Create columns for rolling std, mean_returns, and sharpe ratios
+# TODO: Pick the stocks with the highest returns and sharpe ratios and simulate their trading
+# TODO: Select the top stocks with highest weekly returns and invest on them. Exit when price below EMA_50
+
 import datetime
 import numpy as np
 import pandas as pd
@@ -98,18 +105,33 @@ def calculate_main_stats(_tickers_list, _dates, _tickers_directory, _analysis_di
     _summary_data = pd.read_csv(symbol_to_path(_file_name, _analysis_directory), index_col='Symbol')
     for _ticker in _tickers_list:
         print('Calculating main stats for ', _ticker)
+        _ticker_data = pd.read_csv(symbol_to_path(_ticker + '_TA', _tickers_directory), index_col='Date')
+
+        # Whole date range statistics for Buy and Hold (B&H) strategy:
+        _strategy_daily_returns_column = 'Strategy_0_DayRet'
+        _ticker_data[_strategy_daily_returns_column] = _ticker_data['DailyRet']
+
+        # Strategy cumulative returns without Trading Commissions
+        _strategy_cum_returns_column = 'Strategy_0_CumRet'
+        _ticker_data[_strategy_cum_returns_column] = np.cumprod(_ticker_data[_strategy_daily_returns_column] + 1) - 1
+
+        # Whole data stats
+        _summary_data.loc[_ticker, 'Strategy_0_flag_AvgDailyRet'] = _ticker_data[_strategy_daily_returns_column].mean()
+        _summary_data.loc[_ticker, 'Strategy_0_flag_CumRet'] = _ticker_data[_strategy_cum_returns_column][-1]
+        _summary_data.loc[_ticker, 'Strategy_0_flag_risk'] = _ticker_data[_strategy_daily_returns_column].std()
+
+        # One year statistics calculations
         _base_df = pd.DataFrame(index=_dates)
-        _ticker_data = pd.read_csv(symbol_to_path(_ticker, _tickers_directory), index_col='Date')
         _ticker_data = _base_df.join(_ticker_data).dropna()
         _ticker_ar, _ticker_dr, _ticker_risk, _ticker_kurtosis, _ticker_sr = \
             main_stats_single_asset(_ticker_data['Adj Close'])
-        _summary_data.loc[_ticker, 'Ret52w'] = _ticker_ar
-        _summary_data.loc[_ticker, 'AvgDailyRet52w'] = _ticker_dr
-        _summary_data.loc[_ticker, 'Risk52w'] = _ticker_risk
-        _summary_data.loc[_ticker, 'Kurtosis52w'] = _ticker_kurtosis
-        _summary_data.loc[_ticker, 'SharpeRatio52w'] = _ticker_sr
-        _summary_data.loc[_ticker, 'MinAdjCl52w'] = _ticker_data.describe().loc['min', 'Adj Close']
-        _summary_data.loc[_ticker, 'MaxAdjCl52w'] = _ticker_data.describe().loc['max', 'Adj Close']
+        _summary_data.loc[_ticker, 'Strategy_0_flag_AvgDailyRet52w'] = _ticker_dr
+        _summary_data.loc[_ticker, 'Strategy_0_flag_CumRet52w'] = _ticker_ar
+        _summary_data.loc[_ticker, 'Strategy_0_flag_risk52w'] = _ticker_risk
+        _summary_data.loc[_ticker, 'Strategy_0_flag_Kurtosis52w'] = _ticker_kurtosis
+        _summary_data.loc[_ticker, 'Strategy_0_flag_SharpeRatio52w'] = _ticker_sr
+        _summary_data.loc[_ticker, 'Strategy_0_flag_MinAdjCl52w'] = _ticker_data.describe().loc['min', 'Adj Close']
+        _summary_data.loc[_ticker, 'Strategy_0_flag_MaxAdjCl52w'] = _ticker_data.describe().loc['max', 'Adj Close']
 
     _file_name = 'summary_file'
     _summary_data.to_csv(symbol_to_path(_file_name, _analysis_directory))
@@ -122,6 +144,7 @@ def insert_ta(_tickers_list, _dates, _tickers_directory, _analysis_directory):
     """ Computes main technical analysis values, and saves new tickers files with Technical Analysis (TA) """
 
     from functools import partial
+    import trend  # This is a .py file downloaded from ta library. It works in local, but not as library ?????
     import ta as ta
     # ta: https://technical-analysis-library-in-python.readthedocs.io/en/latest/
 
@@ -167,9 +190,9 @@ def insert_ta(_tickers_list, _dates, _tickers_directory, _analysis_directory):
             _ticker_data['EMA_' + str(_window_size) + '(-2)'] = _ticker_data['EMA_' + str(_window_size)].shift(periods=2)
 
         # ADX columns
-        _ticker_data['ADX'] = ta.trend.adx(pd.Series(_ticker_data['High']), pd.Series(_ticker_data['Low']), pd.Series(_ticker_data['Close']), n=14, fillna=False)
-        _ticker_data['ADX_NEG'] = ta.trend.adx_neg(pd.Series(_ticker_data['High']), pd.Series(_ticker_data['Low']), pd.Series(_ticker_data['Close']), n=14, fillna=False)
-        _ticker_data['ADX_POS'] = ta.trend.adx_pos(pd.Series(_ticker_data['High']), pd.Series(_ticker_data['Low']), pd.Series(_ticker_data['Close']), n=14, fillna=False)
+        _ticker_data['ADX'] = trend.adx(pd.Series(_ticker_data['High']), pd.Series(_ticker_data['Low']), pd.Series(_ticker_data['Close']), n=14, fillna=False)
+        _ticker_data['ADX_NEG'] = trend.adx_neg(pd.Series(_ticker_data['High']), pd.Series(_ticker_data['Low']), pd.Series(_ticker_data['Close']), n=14, fillna=False)
+        _ticker_data['ADX_POS'] = trend.adx_pos(pd.Series(_ticker_data['High']), pd.Series(_ticker_data['Low']), pd.Series(_ticker_data['Close']), n=14, fillna=False)
 
         # Save ticker data with Technical Analysis
         _ticker_data.to_csv(symbol_to_path(_ticker + '_TA', _tickers_directory))
@@ -212,11 +235,11 @@ def simulate_strategy_on_ticker(_ticker, _ticker_data, _column_1, _column_2, _an
         _ticker_data.iloc[i, _strategy_column_number] = _strategy_flag
 
     # Strategy daily returns without Trading Commissions
-    _strategy_daily_returns_column = 'Strategy_' + str(_strategy_number) + '_stratDayRet'
+    _strategy_daily_returns_column = 'Strategy_' + str(_strategy_number) + '_DayRet'
     _ticker_data[_strategy_daily_returns_column] = _ticker_data['DailyRet'] * _ticker_data[_strategy_column]
 
     # Strategy cumulative returns without Trading Commissions
-    _strategy_cum_returns_column = 'Strategy_' + str(_strategy_number) + '_stratCumRet'
+    _strategy_cum_returns_column = 'Strategy_' + str(_strategy_number) + '_CumRet'
     _ticker_data[_strategy_cum_returns_column] = np.cumprod(_ticker_data[_strategy_daily_returns_column] + 1) - 1
 
     # Calculate strategy's last year main statistics
@@ -227,7 +250,7 @@ def simulate_strategy_on_ticker(_ticker, _ticker_data, _column_1, _column_2, _an
     _tmp_ticker_data = _base_df.join(_ticker_data[_strategy_daily_returns_column]).dropna()
 
     # Strategy cumulative returns without Trading Commissions 52 weeks
-    _strategy_cum_returns_52w_column = 'Strategy_' + str(_strategy_number) + '_stratCumRet_52w'
+    _strategy_cum_returns_52w_column = 'Strategy_' + str(_strategy_number) + '_CumRet_52w'
     _ticker_data[_strategy_cum_returns_52w_column] = np.cumprod(_tmp_ticker_data[_strategy_daily_returns_column] + 1) - 1
     _strategy_cum_return_52w = _ticker_data[_strategy_cum_returns_52w_column][-1]
 
@@ -261,33 +284,45 @@ def simulate_strategy_on_ticker(_ticker, _ticker_data, _column_1, _column_2, _an
 
 def run_strategies(_tickers_list, _tickers_directory, _analysis_directory):
     """ Runs strategies over _tickers_list, and computes returns and main statistics for the backtest simulation """
+    import config
 
+    _strategy = pd.DataFrame(columns=['Number', 'Entry', 'Exit', 'Filter'])
+    _st_counter = 0
+    _strategies_to_try = config.strategies_to_try
+
+    # Strategy 0: Buy and hold
+    _strategy.loc[_st_counter, 'Number'] = _st_counter
+    _strategy.loc[_st_counter, 'Entry'] = 'First day of data'
+    _strategy.loc[_st_counter, 'Exit'] = 'Last day of data'
+    _strategy.loc[_st_counter, 'Filter'] = 'None'
+
+    _st_counter += 1
     _MAs = ['SMA_', 'EWMA_', 'EMA_']
     _fast_moving_avg = [5, 5, 5, 20, 20, 50]
     _slow_moving_avg = [20, 50, 200, 50, 200, 200]
-    _strategy = pd.DataFrame(columns=['Number', 'Entry', 'Exit', 'Filter'])
-    _st_counter = 0
 
     for _ma in _MAs:
 
         for _counter in range(len(_fast_moving_avg)):
-            # Strategy n: _fast_moving_avg and _slow_moving_avg crossover
-            _strategy.loc[_st_counter, 'Number'] = _st_counter + 1
-            _strategy.loc[_st_counter, 'Entry'] = _ma + str(_fast_moving_avg[_counter]) + ' > ' + _ma + str(_slow_moving_avg[_counter])
-            _strategy.loc[_st_counter, 'Exit'] = _ma + str(_fast_moving_avg[_counter]) + ' < ' + _ma + str(_slow_moving_avg[_counter])
-            _strategy.loc[_st_counter, 'Filter'] = 'None'
-            print('Strategy info:')
-            print(_strategy.loc[_st_counter, :])
+            if _counter in _strategies_to_try:
+                # Strategy n: _fast_moving_avg and _slow_moving_avg crossover
+                _strategy.loc[_st_counter, 'Number'] = _st_counter
+                _strategy.loc[_st_counter, 'Entry'] = _ma + str(_fast_moving_avg[_counter]) + ' > ' + _ma + str(_slow_moving_avg[_counter])
+                _strategy.loc[_st_counter, 'Exit'] = _ma + str(_fast_moving_avg[_counter]) + ' < ' + _ma + str(_slow_moving_avg[_counter])
+                _strategy.loc[_st_counter, 'Filter'] = 'None'
+                print('Strategy info:')
+                print(_strategy.loc[_st_counter, :])
 
-            column_1 = _ma + str(_fast_moving_avg[_counter])
-            column_2 = _ma + str(_slow_moving_avg[_counter])
-            for _ticker in _tickers_list:
-                print('Simulating strategy with ticker ' + _ticker)
-                _ticker_data = pd.read_csv(symbol_to_path(_ticker + '_TA', _tickers_directory), index_col='Date',
-                                           parse_dates=True, na_values=['nan'])
-                _ticker_data = simulate_strategy_on_ticker(_ticker, _ticker_data, column_1, column_2,
-                                                           _analysis_directory, _st_counter)
-                _ticker_data.to_csv(symbol_to_path(_ticker + '_TA', _tickers_directory))
+                column_1 = _ma + str(_fast_moving_avg[_counter])
+                column_2 = _ma + str(_slow_moving_avg[_counter])
+                for _ticker in _tickers_list:
+                    print('Simulating strategy with ticker ' + _ticker)
+                    _ticker_data = pd.read_csv(symbol_to_path(_ticker + '_TA', _tickers_directory), index_col='Date',
+                                               parse_dates=True, na_values=['nan'])
+                    _ticker_data = simulate_strategy_on_ticker(_ticker, _ticker_data, column_1, column_2,
+                                                               _analysis_directory, _st_counter)
+                    _ticker_data.to_csv(symbol_to_path(_ticker + '_TA', _tickers_directory))
+
             _st_counter += 1
 
     _strategy.to_csv(symbol_to_path('strategies_info', _analysis_directory), index=False)
@@ -370,8 +405,8 @@ def main():
 
     one_year_ago = (pd.datetime.today() - pd.Timedelta(days=365)).strftime('%Y-%m-%d')
     one_year = pd.date_range(one_year_ago, end_date)
-    calculate_main_stats(filtered_tickers_list, one_year, config.tickers_directory, config.analysis_directory)
     insert_ta(filtered_tickers_list, one_year, config.tickers_directory, config.analysis_directory)
+    calculate_main_stats(filtered_tickers_list, one_year, config.tickers_directory, config.analysis_directory)
     run_strategies(filtered_tickers_list, config.tickers_directory, config.analysis_directory)
     summarize_the_summary(config.analysis_directory)
 
@@ -387,7 +422,104 @@ def main():
     _counter = 0
     _column_1 = column_1
     _column_2 = column_2
+    _ticker_data = pd.read_csv(symbol_to_path(_ticker, _tickers_directory), index_col='Date',
+                                   parse_dates=True, na_values=['nan'])
+    _ticker_data['ADX'] = adx(pd.Series(_ticker_data['High']), pd.Series(_ticker_data['Low']), pd.Series(_ticker_data['Close']), n=14, fillna=False)
+    high = pd.Series(_ticker_data['High'])
+    low = pd.Series(_ticker_data['Low'])
+    close = pd.Series(_ticker_data['Close'])
+    n=14
+    fillna = False
 """
+
+
+def get_min_max(x1, x2, f='min'):
+    if not np.isnan(x1) and not np.isnan(x2):
+        if f == 'max':
+            return max(x1, x2)
+        elif f == 'min':
+            return min(x1, x2)
+        else:
+            raise ValueError('"f" variable value should be "min" or "max"')
+    else:
+        return np.nan
+
+
+def adx(high, low, close, n=14, fillna=False):
+    """Average Directional Movement Index (ADX)
+    The Plus Directional Indicator (+DI) and Minus Directional Indicator (-DI)
+    are derived from smoothed averages of these differences, and measure trend
+    direction over time. These two indicators are often referred to
+    collectively as the Directional Movement Indicator (DMI).
+    The Average Directional Index (ADX) is in turn derived from the smoothed
+    averages of the difference between +DI and -DI, and measures the strength
+    of the trend (regardless of direction) over time.
+    Using these three indicators together, chartists can determine both the
+    direction and strength of the trend.
+    http://stockcharts.com/school/doku.php?id=chart_school:technical_indicators:average_directional_index_adx
+    Args:
+        high(pandas.Series): dataset 'High' column.
+        low(pandas.Series): dataset 'Low' column.
+        close(pandas.Series): dataset 'Close' column.
+        n(int): n period.
+        fillna(bool): if True, fill nan values.
+    Returns:
+        pandas.Series: New feature generated.
+    """
+    cs = close.shift(1)
+    pdm = high.combine(cs, lambda x1, x2: get_min_max(x1, x2, 'max'))
+    pdn = low.combine(cs, lambda x1, x2: get_min_max(x1, x2, 'min'))
+    tr = pdm - pdn
+
+    trs_initial = np.zeros(n-1)
+    trs = np.zeros(len(close) - (n - 1))
+    trs[0] = tr.dropna()[0:n].sum()
+    tr = tr.reset_index(drop=True)
+    for i in range(1, len(trs)-1):
+        trs[i] = trs[i-1] - (trs[i-1]/float(n)) + tr[n+i]
+
+    up = high - high.shift(1)
+    dn = low.shift(1) - low
+    pos = abs(((up > dn) & (up > 0)) * up)
+    neg = abs(((dn > up) & (dn > 0)) * dn)
+
+    dip_mio = np.zeros(len(close) - (n - 1))
+    dip_mio[0] = pos.dropna()[0:n].sum()
+
+    pos = pos.reset_index(drop=True)
+    for i in range(1, len(dip_mio)-1):
+        dip_mio[i] = dip_mio[i-1] - (dip_mio[i-1]/float(n)) + pos[n+i]
+
+    din_mio = np.zeros(len(close) - (n - 1))
+    din_mio[0] = neg.dropna()[0:n].sum()
+
+    neg = neg.reset_index(drop=True)
+    for i in range(1, len(din_mio)-1):
+        din_mio[i] = din_mio[i-1] - (din_mio[i-1]/float(n)) + neg[n+i]
+
+    dip = np.zeros(len(trs))
+    for i in range(len(trs)):
+        dip[i] = 100 * (dip_mio[i]/trs[i])
+
+    din = np.zeros(len(trs))
+    for i in range(len(trs)):
+        din[i] = 100 * (din_mio[i]/trs[i])
+
+    dx = 100 * np.abs((dip - din) / (dip + din))
+
+    adx = np.zeros(len(trs))
+    adx[n] = dx[0:n].mean()
+
+    for i in range(n+1, len(adx)):
+        adx[i] = ((adx[i-1] * (n - 1)) + dx[i-1]) / float(n)
+
+    adx = np.concatenate((trs_initial, adx), axis=0)
+    adx = pd.Series(data=adx, index=close.index)
+
+    if fillna:
+        adx = adx.replace([np.inf, -np.inf], np.nan).fillna(20)
+    return pd.Series(adx, name='adx')
+
 
 if __name__ == "__main__":
     main()
