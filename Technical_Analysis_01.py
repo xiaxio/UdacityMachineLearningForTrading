@@ -15,6 +15,7 @@
 import datetime
 import numpy as np
 import pandas as pd
+
 from Lesson_03 import download_yahoo_historical_data, symbol_to_path, symbol_to_path_xlsx
 
 
@@ -121,6 +122,8 @@ def insert_ta(_tickers_list, _dates, _tickers_directory, _analysis_directory):
     """ Computes main technical analysis values, and saves new tickers files with Technical Analysis (TA) """
 
     from functools import partial
+    import ta as ta
+    # ta: https://technical-analysis-library-in-python.readthedocs.io/en/latest/
 
     _file_name = 'summary_file'
     _summary_data = pd.read_csv(symbol_to_path(_file_name, _analysis_directory), index_col='Symbol')
@@ -129,6 +132,7 @@ def insert_ta(_tickers_list, _dates, _tickers_directory, _analysis_directory):
         print('Calculating technical analysis values for ', _ticker)
         _ticker_data = pd.read_csv(symbol_to_path(_ticker, _tickers_directory), index_col='Date',
                                    parse_dates=True, na_values=['nan'])
+        # df = ta.add_all_ta_features(_ticker_data, "Open", "High", "Low", "Close", "Volume", fillna=False)
         _ticker_data['DailyRet'] = _ticker_data['Adj Close'].pct_change()
         _ticker_data.loc[_ticker_data.index[0], 'DailyRet'] = 0
 
@@ -142,9 +146,7 @@ def insert_ta(_tickers_list, _dates, _tickers_directory, _analysis_directory):
         # Insert Weighted Moving Average columns
         # Formula for EWMA:
         # https://stackoverflow.com/questions/38836482/create-a-rolling-custom-ewma-on-a-pandas-dataframe
-
         # _alpha = 1 - np.log(2) / 3  # This is ewma's decay factor.
-
         for _window_size in (5, 20, 50, 200):
             # In the end, I used _alpha as suggested for EMA.
             # The recommended _alpha = 1 - np.log(2) / 3 is too close to price action
@@ -156,6 +158,18 @@ def insert_ta(_tickers_list, _dates, _tickers_directory, _analysis_directory):
             # Previous Periods Data (avoid back-testing bias)
             _ticker_data['EWMA_' + str(_window_size) + '(-1)'] = _ticker_data['EWMA_' + str(_window_size)].shift(periods=1)
             _ticker_data['EWMA_' + str(_window_size) + '(-2)'] = _ticker_data['EWMA_' + str(_window_size)].shift(periods=2)
+
+        # Insert Exponential Moving Average columns
+        for _window_size in (5, 20, 50, 200):
+            _ticker_data['EMA_' + str(_window_size)] = ta.trend.ema_indicator(_ticker_data['Adj Close'], n=_window_size, fillna=False)
+            # Previous Periods Data (avoid back-testing bias)
+            _ticker_data['EMA_' + str(_window_size) + '(-1)'] = _ticker_data['EMA_' + str(_window_size)].shift(periods=1)
+            _ticker_data['EMA_' + str(_window_size) + '(-2)'] = _ticker_data['EMA_' + str(_window_size)].shift(periods=2)
+
+        # ADX columns
+        _ticker_data['ADX'] = ta.trend.adx(pd.Series(_ticker_data['High']), pd.Series(_ticker_data['Low']), pd.Series(_ticker_data['Close']), n=14, fillna=False)
+        _ticker_data['ADX_NEG'] = ta.trend.adx_neg(pd.Series(_ticker_data['High']), pd.Series(_ticker_data['Low']), pd.Series(_ticker_data['Close']), n=14, fillna=False)
+        _ticker_data['ADX_POS'] = ta.trend.adx_pos(pd.Series(_ticker_data['High']), pd.Series(_ticker_data['Low']), pd.Series(_ticker_data['Close']), n=14, fillna=False)
 
         # Save ticker data with Technical Analysis
         _ticker_data.to_csv(symbol_to_path(_ticker + '_TA', _tickers_directory))
@@ -248,7 +262,7 @@ def simulate_strategy_on_ticker(_ticker, _ticker_data, _column_1, _column_2, _an
 def run_strategies(_tickers_list, _tickers_directory, _analysis_directory):
     """ Runs strategies over _tickers_list, and computes returns and main statistics for the backtest simulation """
 
-    _MAs = ['SMA_', 'EWMA_']
+    _MAs = ['SMA_', 'EWMA_', 'EMA_']
     _fast_moving_avg = [5, 5, 5, 20, 20, 50]
     _slow_moving_avg = [20, 50, 200, 50, 200, 200]
     _strategy = pd.DataFrame(columns=['Number', 'Entry', 'Exit', 'Filter'])
