@@ -15,9 +15,11 @@
 # TODO: Once a strategy is ran, save a file with it so it does not need to be run again
 # DONE: Include Buy and hold as strategy 0, and calculate its main stats
 # DONE: Fix bug with ADX in ta library. It is not showing anything
-# TODO: Create columns for rolling std, mean_returns, and sharpe ratios
+# DONE: Create columns for rolling std, mean_returns, and sharpe ratios
+# TODO: Create columns for rolling best and worst performers (top 10 for both)
 # TODO: Pick the stocks with the highest returns and sharpe ratios and simulate their trading
 # TODO: Select the top stocks with highest weekly returns and invest on them. Exit when price below EMA_50
+# TODO: Calculate and graph Sector Capitalization
 
 import datetime
 import numpy as np
@@ -58,6 +60,9 @@ def append_detailed_info(_tickers_data):
     _tickers_extended_data = _tickers_extended_data.join(_tmp_df)
     print('Downloading Average Daily Volume data')
     _tmp_df = data.get_quote_yahoo(_tickers_list)['averageDailyVolume3Month']
+    _tickers_extended_data = _tickers_extended_data.join(_tmp_df)
+    print('Downloading Shares Outstanding data')
+    _tmp_df = data.get_quote_yahoo(_tickers_list)['sharesOutstanding']
     _tickers_extended_data = _tickers_extended_data.join(_tmp_df)
 
     return _tickers_extended_data
@@ -140,6 +145,22 @@ def calculate_main_stats(_tickers_list, _dates, _tickers_directory, _analysis_di
     return
 
 
+def sharpe_ratio(_ticker_data, _period='d'):
+    """ Returns the Sharpe Ratio for the data in _ticker_data, default is daily data """
+    if _period == 'm':
+        _k = 12
+    elif _period == 'w':
+        _k = 52
+    else:
+        _k = 252
+
+    _mean = _ticker_data.mean()
+    _std = _ticker_data.std()
+    _sr = np.sqrt(_k) * _mean / _std
+
+    return _sr
+
+
 def insert_ta(_tickers_list, _dates, _tickers_directory, _analysis_directory):
     """ Computes main technical analysis values, and saves new tickers files with Technical Analysis (TA) """
 
@@ -159,9 +180,16 @@ def insert_ta(_tickers_list, _dates, _tickers_directory, _analysis_directory):
         _ticker_data['DailyRet'] = _ticker_data['Adj Close'].pct_change()
         _ticker_data.loc[_ticker_data.index[0], 'DailyRet'] = 0
 
+        # Insert rolling main stats columns
+        _window_size = 252
+        _ticker_data['AvgDayRet_' + str(_window_size)] = _ticker_data['DailyRet'].rolling(_window_size).mean()
+        _ticker_data['AvgDayRisk_' + str(_window_size)] = _ticker_data['DailyRet'].rolling(_window_size).std()
+        _sharpe_ratio = partial(sharpe_ratio)
+        _ticker_data['AvgDaySharpe_' + str(_window_size)] = _ticker_data['DailyRet'].rolling(_window_size).apply(_sharpe_ratio, raw=True)
+
         # Insert Simple Moving Average columns
         for _window_size in (5, 20, 50, 200):
-            _ticker_data['SMA_' + str(_window_size)] = _ticker_data['Adj Close'].rolling(_window_size).mean()
+            _ticker_data['SMA_' + str(_window_size)] = _ticker_data['Adj Close'].rolling(_window_size, min_periods=0).mean()
             # Previous Periods Data (avoid back-testing bias)
             _ticker_data['SMA_' + str(_window_size) + '(-1)'] = _ticker_data['SMA_' + str(_window_size)].shift(periods=1)
             _ticker_data['SMA_' + str(_window_size) + '(-2)'] = _ticker_data['SMA_' + str(_window_size)].shift(periods=2)
@@ -304,7 +332,8 @@ def run_strategies(_tickers_list, _tickers_directory, _analysis_directory):
     for _ma in _MAs:
 
         for _counter in range(len(_fast_moving_avg)):
-            if _counter in _strategies_to_try:
+            if _st_counter in _strategies_to_try:
+                # _strategy_data = pd.DataFrame()
                 # Strategy n: _fast_moving_avg and _slow_moving_avg crossover
                 _strategy.loc[_st_counter, 'Number'] = _st_counter
                 _strategy.loc[_st_counter, 'Entry'] = _ma + str(_fast_moving_avg[_counter]) + ' > ' + _ma + str(_slow_moving_avg[_counter])
@@ -381,9 +410,162 @@ def summarize_the_summary(_analysis_directory):
     return
 
 
+def create_sub_df(_ticker_data, _days):
+    """ returns a dataframe that contains _ticker_data only for the indicated number of _days """
+
+    _days_ago = (pd.datetime.today() - pd.Timedelta(days=_days)).strftime('%Y-%m-%d')
+    _end_date = pd.datetime.today().strftime('%Y-%m-%d')
+    _date_range = pd.date_range(_days_ago, _end_date)
+    _base_df = pd.DataFrame(index=_date_range)
+    _tmp_ticker_data = _base_df.join(_ticker_data).dropna()
+
+    return _tmp_ticker_data
+
+
+def detect_top_performers(_tickers_list, _tickers_directory, _analysis_directory):
+    """ Reads all tickers in _tickers_list, and selects the top for the day, week, month, and year """
+
+    _columns = ['Ret_Day', 'Ret_Week', 'Ret_Month', 'Ret_Year', 'ADX_Week', 'ADX_Month', 'ADX_Year']
+    _last_period_returns = pd.DataFrame(columns=_columns, index=_tickers_list)
+
+    for _ticker in _tickers_list:
+        print('Calculating returns for ticker ' + _ticker)
+        _ticker_data = pd.read_csv(symbol_to_path(_ticker + '_TA', _tickers_directory), index_col='Date',
+                                   parse_dates=True, na_values=['nan'], usecols=['Date', 'Adj Close', 'ADX'])
+
+        _returns = _ticker_data['Adj Close'].pct_change()
+        _adx = _ticker_data['ADX']
+        # Last day return
+        _last_period_returns.loc[_ticker, _columns[0]] = _returns[-1]
+
+        # Last week return
+        _tmp_return = create_sub_df(_returns, 7)
+        _cum_return = (np.cumprod(_tmp_return + 1) - 1)
+        _cum_return = _cum_return.reset_index(drop=True)
+        _last_period_returns.loc[_ticker, _columns[1]] = _cum_return.iloc[-1, 0]
+
+        # Last week ADX avg
+        _tmp_adx = create_sub_df(_adx, 7)
+        _last_period_returns.loc[_ticker, _columns[4]] = _tmp_adx.values.mean()
+
+        # Last month return
+        _tmp_return = create_sub_df(_returns, 30)
+        _cum_return = (np.cumprod(_tmp_return + 1) - 1)
+        _cum_return = _cum_return.reset_index(drop=True)
+        _last_period_returns.loc[_ticker, _columns[2]] = _cum_return.iloc[-1, 0]
+        
+        # Last month ADX avg
+        _tmp_adx = create_sub_df(_adx, 30)
+        _last_period_returns.loc[_ticker, _columns[5]] = _tmp_adx.values.mean()
+
+        # Last year return
+        _tmp_return = create_sub_df(_returns, 365)
+        _cum_return = (np.cumprod(_tmp_return + 1) - 1)
+        _cum_return = _cum_return.reset_index(drop=True)
+        _last_period_returns.loc[_ticker, _columns[3]] = _cum_return.iloc[-1, 0]
+
+        # Last year ADX avg
+        _tmp_adx = create_sub_df(_adx, 365)
+        _last_period_returns.loc[_ticker, _columns[6]] = _tmp_adx.values.mean()
+
+    _last_period_returns.to_csv(symbol_to_path('last_period_returns', _analysis_directory))
+
+    # Determine the top ten for each column in _columns
+    _top_ten = pd.DataFrame(columns=_columns, index=range(1, 11))
+    for _column in _columns:
+        _top_ten[_column] = _last_period_returns.sort_values(by=_column, ascending=False).index[0:10]
+    _top_ten.to_csv(symbol_to_path('top_ten', _analysis_directory))
+
+    # Determine the bottom ten for each column in _columns
+    _bottom_ten = pd.DataFrame(columns=_columns, index=range(1, 11))
+    for _column in _columns:
+        _bottom_ten[_column] = _last_period_returns.sort_values(by=_column, ascending=True).index[0:10]
+    _bottom_ten.to_csv(symbol_to_path('bottom_ten', _analysis_directory))
+
+    return
+
+
+def top_performers_for_x_day(_tickers_list, _day, _tickers_directory, _analysis_directory):
+    """ Reads all tickers in _tickers_list, and selects the top for the specific _day,
+    for one day, week, month, and year before up to that day """
+
+    _columns = ['Ret_Day', 'Ret_Week', 'Ret_Month', 'Ret_Year', 'ADX_Week', 'ADX_Month', 'ADX_Year']
+    _last_period_returns = pd.DataFrame(columns=_columns, index=_tickers_list)
+
+    for _ticker in _tickers_list:
+        print('Calculating returns for ticker ' + _ticker)
+        _ticker_data = pd.read_csv(symbol_to_path(_ticker, _tickers_directory), index_col='Date',
+                                   parse_dates=True, na_values=['nan'])
+
+        _returns = _ticker_data['Adj Close'].pct_change()
+        # Last day return
+        _last_period_returns.loc[_ticker, _columns[0]] = _returns[-1]
+
+        # Last week return
+        _tmp_return = create_sub_df(_returns, 7)
+        _cum_return = (np.cumprod(_tmp_return + 1) - 1)
+        _cum_return = _cum_return.reset_index(drop=True)
+        _last_period_returns.loc[_ticker, _columns[1]] = _cum_return.iloc[-1, 0]
+
+        # Last month return
+        _tmp_return = create_sub_df(_returns, 30)
+        _cum_return = (np.cumprod(_tmp_return + 1) - 1)
+        _cum_return = _cum_return.reset_index(drop=True)
+        _last_period_returns.loc[_ticker, _columns[2]] = _cum_return.iloc[-1, 0]
+
+        # Last year return
+        _tmp_return = create_sub_df(_returns, 365)
+        _cum_return = (np.cumprod(_tmp_return + 1) - 1)
+        _cum_return = _cum_return.reset_index(drop=True)
+        _last_period_returns.loc[_ticker, _columns[3]] = _cum_return.iloc[-1, 0]
+
+    _last_period_returns.to_csv(symbol_to_path('last_period_returns', _analysis_directory))
+
+    _top_five = pd.DataFrame(columns=[_columns[0], _columns[1], _columns[2], _columns[3]], index=range(1, 6))
+    _top_five[_columns[0]] = _last_period_returns.sort_values(by=_columns[0], ascending=False).index[0:5]
+    _top_five[_columns[1]] = _last_period_returns.sort_values(by=_columns[1], ascending=False).index[0:5]
+    _top_five[_columns[2]] = _last_period_returns.sort_values(by=_columns[2], ascending=False).index[0:5]
+    _top_five[_columns[3]] = _last_period_returns.sort_values(by=_columns[3], ascending=False).index[0:5]
+
+    return
+
+
+def compute_sector_performance(_tickers_list, _tickers_directory, _analysis_directory):
+    """ Makes calculations by sector """
+
+    _file_name = 'summary_file'
+    _summary_data = pd.read_csv(symbol_to_path(_file_name, _analysis_directory), index_col='Symbol')
+    _sectors_list = _summary_data['GICS Sector'].unique()
+    # _sector_cap = df.eval("notional_current * DistanceBestRate").groupby(df.BrokerBestRate).sum()
+    _first_time = True
+    # _sector_cap = pd.DataFrame(columns=_sectors_list, index='Date')
+    for _ticker in _tickers_list:
+        _ticker_sector = _summary_data.loc[_ticker, 'GICS Sector']
+        _ticker_data = pd.read_csv(symbol_to_path(_ticker, _tickers_directory), index_col='Date',
+                                   parse_dates=True, na_values=['nan'], usecols=['Date', 'Adj Close'])
+        _ticker_cap = _ticker_data * _summary_data.loc[_ticker, 'sharesOutstanding']
+        if _first_time:
+            _sector_cap = pd.DataFrame(columns=_sectors_list, index=_ticker_cap.index)
+            _sector_cap.fillna(0, inplace=True)
+            _first_time = False
+        _sector_cap[_ticker_sector] = _sector_cap[_ticker_sector].add(_ticker_cap['Adj Close'])
+        # https://stackoverflow.com/questions/43708567/timestamp-object-is-not-iterable
+    _sector_cap.to_csv(symbol_to_path('sectors_cap', _analysis_directory))
+    # Normalize the Sector Capitalization data
+    _norm_sector_cap = _sector_cap / _sector_cap.iloc[0, :]
+    _norm_sector_cap.to_csv(symbol_to_path('normalized_sectors_data', _analysis_directory))
+    _sector_returns = _sector_cap.pct_change()
+    _sector_returns.describe().to_csv('sectors_returns', _analysis_directory)
+    # Check https://stackoverflow.com/questions/53645882/pandas-merging-101
+
+    return
+
+
 def main():
     # Load tickers list as specified in config.py
     import config
+
+    pd.set_option('display.expand_frame_repr', False)  # Forces to display all the info when printed
 
     tickers_data = pd.DataFrame()
     tickers_data = get_tickers_list(config.tickers_file)
@@ -409,6 +591,9 @@ def main():
     calculate_main_stats(filtered_tickers_list, one_year, config.tickers_directory, config.analysis_directory)
     run_strategies(filtered_tickers_list, config.tickers_directory, config.analysis_directory)
     summarize_the_summary(config.analysis_directory)
+    detect_top_performers(filtered_tickers_list, config.tickers_directory, config.analysis_directory)
+    compute_sector_performance(filtered_tickers_list, config.tickers_directory, config.analysis_directory)
+
 
 
 """
@@ -424,102 +609,13 @@ def main():
     _column_2 = column_2
     _ticker_data = pd.read_csv(symbol_to_path(_ticker, _tickers_directory), index_col='Date',
                                    parse_dates=True, na_values=['nan'])
-    _ticker_data['ADX'] = adx(pd.Series(_ticker_data['High']), pd.Series(_ticker_data['Low']), pd.Series(_ticker_data['Close']), n=14, fillna=False)
-    high = pd.Series(_ticker_data['High'])
-    low = pd.Series(_ticker_data['Low'])
-    close = pd.Series(_ticker_data['Close'])
-    n=14
-    fillna = False
+    _one_year_ago = (pd.datetime.today() - pd.Timedelta(days=365)).strftime('%Y-%m-%d')
+    _end_date = pd.datetime.today().strftime('%Y-%m-%d')
+    _one_year = pd.date_range('2018-08-20', '2019-08-20')
+    _one_year = pd.date_range(_one_year_ago, _end_date)
+    _base_df = pd.DataFrame(index=_one_year)
+    _tmp_ticker_data = _base_df.join(_ticker_data['DailyRet']).dropna()
 """
-
-
-def get_min_max(x1, x2, f='min'):
-    if not np.isnan(x1) and not np.isnan(x2):
-        if f == 'max':
-            return max(x1, x2)
-        elif f == 'min':
-            return min(x1, x2)
-        else:
-            raise ValueError('"f" variable value should be "min" or "max"')
-    else:
-        return np.nan
-
-
-def adx(high, low, close, n=14, fillna=False):
-    """Average Directional Movement Index (ADX)
-    The Plus Directional Indicator (+DI) and Minus Directional Indicator (-DI)
-    are derived from smoothed averages of these differences, and measure trend
-    direction over time. These two indicators are often referred to
-    collectively as the Directional Movement Indicator (DMI).
-    The Average Directional Index (ADX) is in turn derived from the smoothed
-    averages of the difference between +DI and -DI, and measures the strength
-    of the trend (regardless of direction) over time.
-    Using these three indicators together, chartists can determine both the
-    direction and strength of the trend.
-    http://stockcharts.com/school/doku.php?id=chart_school:technical_indicators:average_directional_index_adx
-    Args:
-        high(pandas.Series): dataset 'High' column.
-        low(pandas.Series): dataset 'Low' column.
-        close(pandas.Series): dataset 'Close' column.
-        n(int): n period.
-        fillna(bool): if True, fill nan values.
-    Returns:
-        pandas.Series: New feature generated.
-    """
-    cs = close.shift(1)
-    pdm = high.combine(cs, lambda x1, x2: get_min_max(x1, x2, 'max'))
-    pdn = low.combine(cs, lambda x1, x2: get_min_max(x1, x2, 'min'))
-    tr = pdm - pdn
-
-    trs_initial = np.zeros(n-1)
-    trs = np.zeros(len(close) - (n - 1))
-    trs[0] = tr.dropna()[0:n].sum()
-    tr = tr.reset_index(drop=True)
-    for i in range(1, len(trs)-1):
-        trs[i] = trs[i-1] - (trs[i-1]/float(n)) + tr[n+i]
-
-    up = high - high.shift(1)
-    dn = low.shift(1) - low
-    pos = abs(((up > dn) & (up > 0)) * up)
-    neg = abs(((dn > up) & (dn > 0)) * dn)
-
-    dip_mio = np.zeros(len(close) - (n - 1))
-    dip_mio[0] = pos.dropna()[0:n].sum()
-
-    pos = pos.reset_index(drop=True)
-    for i in range(1, len(dip_mio)-1):
-        dip_mio[i] = dip_mio[i-1] - (dip_mio[i-1]/float(n)) + pos[n+i]
-
-    din_mio = np.zeros(len(close) - (n - 1))
-    din_mio[0] = neg.dropna()[0:n].sum()
-
-    neg = neg.reset_index(drop=True)
-    for i in range(1, len(din_mio)-1):
-        din_mio[i] = din_mio[i-1] - (din_mio[i-1]/float(n)) + neg[n+i]
-
-    dip = np.zeros(len(trs))
-    for i in range(len(trs)):
-        dip[i] = 100 * (dip_mio[i]/trs[i])
-
-    din = np.zeros(len(trs))
-    for i in range(len(trs)):
-        din[i] = 100 * (din_mio[i]/trs[i])
-
-    dx = 100 * np.abs((dip - din) / (dip + din))
-
-    adx = np.zeros(len(trs))
-    adx[n] = dx[0:n].mean()
-
-    for i in range(n+1, len(adx)):
-        adx[i] = ((adx[i-1] * (n - 1)) + dx[i-1]) / float(n)
-
-    adx = np.concatenate((trs_initial, adx), axis=0)
-    adx = pd.Series(data=adx, index=close.index)
-
-    if fillna:
-        adx = adx.replace([np.inf, -np.inf], np.nan).fillna(20)
-    return pd.Series(adx, name='adx')
-
 
 if __name__ == "__main__":
     main()
